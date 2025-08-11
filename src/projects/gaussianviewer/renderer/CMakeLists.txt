@@ -10,6 +10,8 @@
 set(SIBR_PROJECT "gaussian")
 project(sibr_${SIBR_PROJECT} LANGUAGES CXX)
 
+set(CMAKE_CUDA_ARCHITECTURES "80;86;90")
+
 sibr_gitlibrary(TARGET CudaRasterizer
     GIT_REPOSITORY 	"https://github.com/xieyuser/gaussian-semantic-normal-rasterization-.git"
     GIT_TAG			"34220f01514317dad36c4fd4083f4a807908651f"
@@ -20,7 +22,17 @@ sibr_gitlibrary(TARGET CudaRasterizer
 #     GIT_TAG			"255c532d5fd0c3d83afec0e8e49574b65ae381bd"
 # )
 
+
 find_package(CUDAToolkit REQUIRED)
+
+include("${PROJECT_SOURCE_DIR}/cmake/torch.cmake")
+
+list(APPEND CMAKE_PREFIX_PATH ${TORCH_CMAKE_PREFIX_PATH}
+$ENV{CMAKE_PREFIX_PATH})
+
+find_package(Torch REQUIRED)
+find_package(PythonLibs REQUIRED)
+
 
 file(GLOB SOURCES "*.cpp" "*.h" "*.hpp")
 source_group("Source Files" FILES ${SOURCES})
@@ -33,7 +45,10 @@ file(GLOB SOURCES "*.cpp" "*.h" "*.hpp" "shaders/*.frag" "shaders/*.vert" "shade
 ## Specify target rules
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
-include_directories(${Boost_INCLUDE_DIRS} .)
+include_directories(${Boost_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${PYTHON_INCLUDE_DIRS} .)
+
+message("dddddddddddddddddddddddddddddddddddddddddd"${TORCH_LIBRARIES})
+
 if (WIN32)
 target_link_libraries(${PROJECT_NAME}
 	${Boost_LIBRARIES}
@@ -41,6 +56,7 @@ target_link_libraries(${PROJECT_NAME}
 	${GLEW_LIBRARIES}
 	${OPENGL_LIBRARIES}
 	${OpenCV_LIBRARIES}
+	${TORCH_LIBRARIES}
 	glfw3
 	sibr_system
 	sibr_view
@@ -65,6 +81,8 @@ target_link_libraries(${PROJECT_NAME}
 	sibr_basic
 	CUDA::cudart
 	CudaRasterizer
+	torch_cpu
+    c10
 )
 endif()
 

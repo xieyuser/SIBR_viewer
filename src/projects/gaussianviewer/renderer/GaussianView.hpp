@@ -8,8 +8,8 @@
  *
  * For inquiries contact sibr@inria.fr and/or George.Drettakis@inria.fr
  */
-#pragma once
 
+#pragma once
 #include "Config.hpp"
 #include <core/renderer/RenderMaskHolder.hpp>
 #include <core/scene/BasicIBRScene.hpp>
@@ -105,7 +105,7 @@ namespace sibr
 		float *seg_cuda;
 		int *rect_cuda;
 
-		GLuint imageBuffer, depthBuffer, segBuffer, normalBuffer, alphaBuffer, knnmapBuffer;
+		GLuint imageBuffer, depthOutBuffer, segOutBuffer, normalOutBuffer, alphaOutBuffer, knnmapOutBuffer;
 		cudaGraphicsResource_t imageBufferCuda, depthBufferCuda, segBufferCuda, normalBufferCuda, alphaBufferCuda,
 			knnmapBufferCuda;
 
@@ -122,8 +122,8 @@ namespace sibr
 		GaussianData *gData;
 
 		bool _interop_failed = true;
-		std::vector<char> fallback_rgb_bytes, fallback_alpha_bytes, fallback_depth_bytes, fallback_normal_bytes, fallback_seg_bytes, fallback_knnmap_bytes;
-		std::vector<char> fallback_depthout_bytes, fallback_normalout_bytes, fallback_segout_bytes, fallback_knnmapout_bytes;
+		std::vector<char> fallback_alpha_bytes, fallback_depth_bytes, fallback_normal_bytes, fallback_seg_bytes, fallback_knnmap_bytes;
+		std::vector<char> fallback_rgb_bytes, fallback_depthout_bytes, fallback_normalout_bytes, fallback_segout_bytes, fallback_alphaout_bytes, fallback_knnmapout_bytes;
 		float *fallbackRGBBufferCuda = nullptr;
 		float *fallbackAlphaBufferCuda = nullptr;
 		float *fallbackDepthBufferCuda = nullptr;
@@ -134,9 +134,10 @@ namespace sibr
 		float *fallbackDepthOutBufferCuda = nullptr;
 		float *fallbackNormalOutBufferCuda = nullptr;
 		float *fallbackSegOutBufferCuda = nullptr;
+		float *fallbackAlphaOutBufferCuda = nullptr;
 		float *fallbackKnnmapOutBufferCuda = nullptr;
 
-		bool accepted = false;
+		bool accepted = true;
 
 		std::shared_ptr<sibr::BasicIBRScene> _scene; ///< The current scene.
 		PointBasedRenderer::Ptr _pointbasedrenderer;

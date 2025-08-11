@@ -10,6 +10,7 @@
  */
 
 #include <projects/gaussianviewer/renderer/GaussianView.hpp>
+#include <projects/gaussianviewer/renderer/ImageConvert.hpp>
 #include <core/graphics/GUI.hpp>
 #include <thread>
 #include <boost/asio.hpp>
@@ -64,18 +65,6 @@ float inverse_sigmoid(const float m1)
 {
 	return log(m1 / (1.0f - m1));
 }
-
-#define CUDA_SAFE_CALL_ALWAYS(A)              \
-	A;                                        \
-	cudaDeviceSynchronize();                  \
-	if (cudaPeekAtLastError() != cudaSuccess) \
-		SIBR_ERR << cudaGetErrorString(cudaGetLastError());
-
-#if DEBUG || _DEBUG
-#define CUDA_SAFE_CALL(A) CUDA_SAFE_CALL_ALWAYS(A)
-#else
-#define CUDA_SAFE_CALL(A) A
-#endif
 
 // Load the Gaussians from the given file.
 template <int D, int S>
@@ -463,20 +452,20 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr &ibrScene, uint 
 	glCreateBuffers(1, &imageBuffer);
 	glNamedBufferStorage(imageBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	glCreateBuffers(1, &segBuffer);
-	glNamedBufferStorage(segBuffer, render_w * render_h * 15 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(1, &depthOutBuffer);
+	glNamedBufferStorage(depthOutBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	glCreateBuffers(1, &depthBuffer);
-	glNamedBufferStorage(depthBuffer, render_w * render_h * 1 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(1, &normalOutBuffer);
+	glNamedBufferStorage(normalOutBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	glCreateBuffers(1, &normalBuffer);
-	glNamedBufferStorage(normalBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(1, &segOutBuffer);
+	glNamedBufferStorage(segOutBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	glCreateBuffers(1, &alphaBuffer);
-	glNamedBufferStorage(alphaBuffer, render_w * render_h * 1 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(1, &alphaOutBuffer);
+	glNamedBufferStorage(alphaOutBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	glCreateBuffers(1, &knnmapBuffer);
-	glNamedBufferStorage(knnmapBuffer, render_w * render_h * 1 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(1, &knnmapOutBuffer);
+	glNamedBufferStorage(knnmapOutBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
 	fallback_rgb_bytes.resize(render_w * render_h * 3 * sizeof(float));
 	cudaMalloc(&fallbackRGBBufferCuda, fallback_rgb_bytes.size());
@@ -484,26 +473,29 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr &ibrScene, uint 
 	fallback_depth_bytes.resize(render_w * render_h * sizeof(float));
 	cudaMalloc(&fallbackDepthBufferCuda, fallback_depth_bytes.size());
 
-	fallback_depthout_bytes.resize(render_w * render_h * 3 * sizeof(float));
-	cudaMalloc(&fallbackDepthOutBufferCuda, fallback_depthout_bytes.size());
-
 	fallback_normal_bytes.resize(render_w * render_h * 3 * sizeof(float));
 	cudaMalloc(&fallbackNormalBufferCuda, fallback_normal_bytes.size());
 
-	fallback_normalout_bytes.resize(render_w * render_h * 3 * sizeof(float));
-	cudaMalloc(&fallbackNormalOutBufferCuda, fallback_normalout_bytes.size());
-
 	fallback_seg_bytes.resize(render_w * render_h * 15 * sizeof(float));
 	cudaMalloc(&fallbackSegBufferCuda, fallback_seg_bytes.size());
-
-	fallback_segout_bytes.resize(render_w * render_h * 3 * sizeof(float));
-	cudaMalloc(&fallbackSegOutBufferCuda, fallback_segout_bytes.size());
 
 	fallback_alpha_bytes.resize(render_w * render_h * sizeof(float));
 	cudaMalloc(&fallbackAlphaBufferCuda, fallback_alpha_bytes.size());
 
 	fallback_knnmap_bytes.resize(render_w * render_h * sizeof(float));
 	cudaMalloc(&fallbackKnnmapBufferCuda, fallback_knnmap_bytes.size());
+
+	fallback_depthout_bytes.resize(render_w * render_h * 3 * sizeof(float));
+	cudaMalloc(&fallbackDepthOutBufferCuda, fallback_depthout_bytes.size());
+
+	fallback_normalout_bytes.resize(render_w * render_h * 3 * sizeof(float));
+	cudaMalloc(&fallbackNormalOutBufferCuda, fallback_normalout_bytes.size());
+
+	fallback_segout_bytes.resize(render_w * render_h * 3 * sizeof(float));
+	cudaMalloc(&fallbackSegOutBufferCuda, fallback_segout_bytes.size());
+
+	fallback_alphaout_bytes.resize(render_w * render_h * 3 * sizeof(float));
+	cudaMalloc(&fallbackAlphaOutBufferCuda, fallback_alphaout_bytes.size());
 
 	fallback_knnmapout_bytes.resize(render_w * render_h * 3 * sizeof(float));
 	cudaMalloc(&fallbackKnnmapOutBufferCuda, fallback_knnmapout_bytes.size());
@@ -565,11 +557,11 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget &dst, const sibr::Camer
 		float *alpha_cuda = nullptr;
 		float *knnmap_cuda = nullptr;
 
-		float *segout_cuda_convert = nullptr;
-		float *depth_cuda_convert = nullptr;
-		float *normal_cuda_convert = nullptr;
-		float *alpha_cuda_convert = nullptr;
-		float *knnmap_cuda_convert = nullptr;
+		float *segoutout_cuda = nullptr;
+		float *depthout_cuda = nullptr;
+		float *normalout_cuda = nullptr;
+		float *alphaout_cuda = nullptr;
+		float *knnmapout_cuda = nullptr;
 
 		// allocate memory
 		image_cuda = fallbackRGBBufferCuda;
@@ -579,10 +571,16 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget &dst, const sibr::Camer
 		alpha_cuda = fallbackAlphaBufferCuda;
 		knnmap_cuda = fallbackKnnmapBufferCuda;
 
+		depthout_cuda = fallbackDepthOutBufferCuda;
+		normalout_cuda = fallbackNormalOutBufferCuda;
+		segoutout_cuda = fallbackSegOutBufferCuda;
+		alphaout_cuda = fallbackAlphaOutBufferCuda;
+		knnmapout_cuda = fallbackKnnmapOutBufferCuda;
+
 		// Rasterize
-		int *rects = _fastCulling ? rect_cuda : nullptr;
-		float *boxmin = _cropping ? (float *)&_boxmin : nullptr;
-		float *boxmax = _cropping ? (float *)&_boxmax : nullptr;
+		// int *rects = _fastCulling ? rect_cuda : nullptr;
+		// float *boxmin = _cropping ? (float *)&_boxmin : nullptr;
+		// float *boxmax = _cropping ? (float *)&_boxmax : nullptr;
 
 		// CudaRasterizer::Rasterizer::forward(
 		// 	geomBufferFunc,
@@ -649,55 +647,53 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget &dst, const sibr::Camer
 			nullptr,
 			false);
 
-		// Copy image contents to framebuffer
-		CUDA_SAFE_CALL(cudaMemcpy(fallback_rgb_bytes.data(), fallbackRGBBufferCuda, fallback_rgb_bytes.size(), cudaMemcpyDeviceToHost));
-		glNamedBufferSubData(imageBuffer, 0, fallback_rgb_bytes.size(), fallback_rgb_bytes.data());
+		RasterizeGaussiansConvertImageCUDA(
+			// input
+			depth_cuda,
+			normal_cuda, 3,
+			segout_cuda, 15,
+			knnmap_cuda,
+			_copyRenderer->height(), _copyRenderer->width(),
+			// output
+			depthout_cuda,
+			normalout_cuda,
+			segoutout_cuda,
+			knnmapout_cuda);
 
-		// CUDA_SAFE_CALL(cudaMemcpy(fallback_depthout_bytes.data(), fallbackDepthBufferCuda, fallback_depthout_bytes.size(), cudaMemcpyDeviceToHost));
-		// glNamedBufferSubData(depthBuffer, 0, fallback_depthout_bytes.size(), fallback_depthout_bytes.data());
-
-		// CUDA_SAFE_CALL(cudaMemcpy(fallback_normalout_bytes.data(), fallbackNormalBufferCuda, fallback_normalout_bytes.size(), cudaMemcpyDeviceToHost));
-		// glNamedBufferSubData(normalBuffer, 0, fallback_normalout_bytes.size(), fallback_normalout_bytes.data());
-
-		// CUDA_SAFE_CALL(cudaMemcpy(fallback_segout_bytes.data(), fallbackSegBufferCuda, fallback_segout_bytes.size(), cudaMemcpyDeviceToHost));
-		// glNamedBufferSubData(segBuffer, 0, fallback_segout_bytes.size(), fallback_segout_bytes.data());
-
-		// CUDA_SAFE_CALL(cudaMemcpy(fallback_alpha_bytes.data(), fallbackAlphaBufferCuda, fallback_alpha_bytes.size(), cudaMemcpyDeviceToHost));
-		// glNamedBufferSubData(alphaBuffer, 0, fallback_alpha_bytes.size(), fallback_alpha_bytes.data());
-
-		// CUDA_SAFE_CALL(cudaMemcpy(fallback_knnmapout_bytes.data(), fallbackKnnmapBufferCuda, fallback_knnmapout_bytes.size(), cudaMemcpyDeviceToHost));
-		// glNamedBufferSubData(knnmapBuffer, 0, fallback_knnmapout_bytes.size(), fallback_knnmapout_bytes.data());
-
-		_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
-		// _copyRenderer->process(depthBuffer, dst, _resolution.x(), _resolution.y());
-		// _copyRenderer->process(alphaBuffer, dst, _resolution.x(), _resolution.y());
-		// _copyRenderer->process(normalBuffer, dst, _resolution.x(), _resolution.y());
-		// _copyRenderer->process(segBuffer, dst, _resolution.x(), _resolution.y());
-		// _copyRenderer->process(knnmapBuffer, dst, _resolution.x(), _resolution.y());
-		// if (currModal == "depth")
-		// {
-		// 	_copyRenderer->process(depthBuffer, dst, _resolution.x(), _resolution.y());
-		// }
-		// else if (currModal == "normal")
-		// {
-		// 	_copyRenderer->process(depthBuffer, dst, _resolution.x(), _resolution.y());
-		// }
-		// else if (currModal == "semantic")
-		// {
-		// 	_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
-		// }
-		// else if (currModal == "knnmap")
-		// {
-		// 	_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
-		// }
-		// else if (currModal == "alpha")
-		// {
-		// 	_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
-		// }
-		// else
-		// {
-		// 	_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
-		// }
+		if (currModal == "depth")
+		{
+			CUDA_SAFE_CALL(cudaMemcpy(fallback_depthout_bytes.data(), fallbackDepthOutBufferCuda, fallback_depthout_bytes.size(), cudaMemcpyDeviceToHost));
+			glNamedBufferSubData(depthOutBuffer, 0, fallback_depthout_bytes.size(), fallback_depthout_bytes.data());
+			_copyRenderer->process(depthOutBuffer, dst, _resolution.x(), _resolution.y());
+		}
+		else if (currModal == "normal")
+		{
+			CUDA_SAFE_CALL(cudaMemcpy(fallback_normalout_bytes.data(), fallbackNormalOutBufferCuda, fallback_normalout_bytes.size(), cudaMemcpyDeviceToHost));
+			glNamedBufferSubData(normalOutBuffer, 0, fallback_normalout_bytes.size(), fallback_normalout_bytes.data());
+			_copyRenderer->process(normalOutBuffer, dst, _resolution.x(), _resolution.y());
+		}
+		else if (currModal == "semantic")
+		{
+			CUDA_SAFE_CALL(cudaMemcpy(fallback_segout_bytes.data(), fallbackSegOutBufferCuda, fallback_segout_bytes.size(), cudaMemcpyDeviceToHost));
+			glNamedBufferSubData(segOutBuffer, 0, fallback_segout_bytes.size(), fallback_segout_bytes.data());
+			_copyRenderer->process(segOutBuffer, dst, _resolution.x(), _resolution.y());
+		}
+		else if (currModal == "knnmap")
+		{
+			CUDA_SAFE_CALL(cudaMemcpy(fallback_knnmapout_bytes.data(), fallbackKnnmapOutBufferCuda, fallback_knnmapout_bytes.size(), cudaMemcpyDeviceToHost));
+			glNamedBufferSubData(knnmapOutBuffer, 0, fallback_knnmapout_bytes.size(), fallback_knnmapout_bytes.data());
+			_copyRenderer->process(knnmapOutBuffer, dst, _resolution.x(), _resolution.y());
+		}
+		else if (currModal == "alpha")
+		{
+			_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
+		}
+		else
+		{
+			CUDA_SAFE_CALL(cudaMemcpy(fallback_rgb_bytes.data(), fallbackRGBBufferCuda, fallback_rgb_bytes.size(), cudaMemcpyDeviceToHost));
+			glNamedBufferSubData(imageBuffer, 0, fallback_rgb_bytes.size(), fallback_rgb_bytes.data());
+			_copyRenderer->process(imageBuffer, dst, _resolution.x(), _resolution.y());
+		}
 	}
 
 	if (cudaPeekAtLastError() != cudaSuccess)
@@ -732,8 +728,8 @@ void sibr::GaussianView::onGUI()
 				currModal = "rgb";
 			if (ImGui::Selectable("depth"))
 				currModal = "depth";
-			if (ImGui::Selectable("normals"))
-				currModal = "normals";
+			if (ImGui::Selectable("normal"))
+				currModal = "normal";
 			if (ImGui::Selectable("alpha"))
 				currModal = "alpha";
 			if (ImGui::Selectable("semantic"))
@@ -836,12 +832,18 @@ sibr::GaussianView::~GaussianView()
 	cudaFree(fallbackAlphaBufferCuda);
 	cudaFree(fallbackKnnmapBufferCuda);
 
+	cudaFree(fallbackDepthOutBufferCuda);
+	cudaFree(fallbackNormalOutBufferCuda);
+	cudaFree(fallbackSegOutBufferCuda);
+	cudaFree(fallbackAlphaOutBufferCuda);
+	cudaFree(fallbackKnnmapOutBufferCuda);
+
 	glDeleteBuffers(1, &imageBuffer);
-	glDeleteBuffers(1, &depthBuffer);
-	glDeleteBuffers(1, &segBuffer);
-	glDeleteBuffers(1, &normalBuffer);
-	glDeleteBuffers(1, &alphaBuffer);
-	glDeleteBuffers(1, &knnmapBuffer);
+	glDeleteBuffers(1, &depthOutBuffer);
+	glDeleteBuffers(1, &segOutBuffer);
+	glDeleteBuffers(1, &normalOutBuffer);
+	glDeleteBuffers(1, &alphaOutBuffer);
+	glDeleteBuffers(1, &knnmapOutBuffer);
 
 	if (geomPtr)
 		cudaFree(geomPtr);
